@@ -1,0 +1,531 @@
+# Copyright © Amazon Web Services
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  Pipeline for Well Analytics
+
+Parameters:
+  Email:
+    Description: Serves as username and email for system
+    Type: String
+    Default: test@example.com
+    AllowedPattern: (?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])
+
+Resources:
+
+  # This bucket is used for CodeBuild caching within the current repository
+  # It cannot be shared between repos, but will cache all dependencies, not just
+  # Those of the shared OSDU libraries, like the shared Persistent M2 S3 Bucket below
+  # It is used to improve build times by not requiring Maven to pull all public dependencies
+  # from the central Maven repository every single time the build pipeline is run
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub ${AWS::AccountId}-bsee-sourcecode
+      VersioningConfiguration:
+        Status: Enabled
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      ArtifactStore:
+        Type: S3
+        Location: !Ref S3Bucket
+      Name: well-analytics-pipeline
+      RoleArn: !GetAtt [PipelineRole, Arn]
+      Stages:
+        - Name: Source
+          Actions:
+            - Name: Source
+              ActionTypeId:
+                Category: Source
+                Owner: AWS
+                Provider: S3
+                Version: '1'
+              RunOrder: '1'
+              OutputArtifacts: 
+                - 
+                  Name: SourceOutput 
+              Configuration:
+                S3Bucket: !Ref S3Bucket
+                S3ObjectKey: WellAnalytics-CFN.zip
+                PollForSourceChanges: true
+        - Name: Deployment-CodeBuild
+          Actions:
+            - Name: Deployment-CodeBuild
+              InputArtifacts:
+                -
+                  Name: SourceOutput
+              ActionTypeId:
+                Category: Build
+                Owner: AWS
+                Provider: CodeBuild
+                Version: '1'
+              Configuration:
+                ProjectName: !Ref DeploymentCodeBuild
+              RunOrder: '2'
+
+        - Name: Deployment
+          Actions:
+            - Name: CloudFormation-Deployment-Master
+              InputArtifacts:
+                -
+                  Name: SourceOutput
+              ActionTypeId:
+                Category: Deploy
+                Owner: AWS
+                Provider: CloudFormation
+                Version: '1'
+              InputArtifacts:
+                - Name: SourceOutput
+              Configuration:
+                ActionMode: CREATE_UPDATE
+                Capabilities: CAPABILITY_NAMED_IAM
+                ParameterOverrides: !Sub |
+                  {
+                    "Email" : "${Email}"
+                  }
+                RoleArn: !GetAtt [ CFNRole, Arn ]
+                StackName: WellAnalytics-CFN
+                TemplatePath: "SourceOutput::BSEE-CFN.yml"
+                Capabilities: CAPABILITY_IAM,CAPABILITY_AUTO_EXPAND
+              RunOrder: '3'
+
+  DeploymentCodeBuild:
+    Type: AWS::CodeBuild::Project
+    Properties:
+      Name: WellAnalytics-CodeBuild
+      Artifacts:
+        Type: no_artifacts
+      Description: CodeBuild commands which run prior to the deployment.
+      ServiceRole:
+        Fn::GetAtt: [ CodeBuildRole, Arn ]
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: aws/codebuild/standard:2.0
+        EnvironmentVariables:
+          - Name: S3Bucket
+            Type: PLAINTEXT
+            Value: !Ref S3Bucket
+        PrivilegedMode: false
+      Source:
+        BuildSpec: !Sub arn:aws:s3:::${S3Bucket}/buildspec.yml
+        Type: NO_SOURCE
+      TimeoutInMinutes: 15
+
+
+
+  CFNRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ['sts:AssumeRole']
+            Effect: Allow
+            Principal:
+              Service: [cloudformation.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CFNRole
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              -
+                Action:
+                  - 's3:*'
+                  - 'cloudwatch:*'
+                  - 'events:*'
+                  - 'logs:*'
+                  - 'lambda:*'
+                  - 'cloudformation:*'
+                  - 'dynamodb:*'
+                  - 'states:*'
+                  - 'cognito-identity:*'
+                  - 'cognito-idp:*'
+                  - 'cognito-sync:*'
+                  - 'iam:CreateUser'
+                  - 'iam:UpdateUser'
+                  - 'iam:DeleteUser'
+                  - 'iam:CreateAccessKey'
+                  - 'iam:UpdateAccessKey'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:Delete*'
+                  - "iam:List*"
+                  - "iam:Get*"
+                  - "iam:CreateServiceSpecificCredential"
+                  - "iam:DeactivateMFADevice"
+                  - "iam:GenerateServiceLastAccessedDetails"
+                  - "iam:UpdateOpenIDConnectProviderThumbprint"
+                  - "iam:PutRolePolicy"
+                  - "iam:AddRoleToInstanceProfile"
+                  - "iam:SimulateCustomPolicy"
+                  - "iam:UploadSSHPublicKey"
+                  - "iam:UpdateServiceSpecificCredential"
+                  - "iam:RemoveClientIDFromOpenIDConnectProvider"
+                  - "iam:UpdateRoleDescription"
+                  - "iam:UpdateServerCertificate"
+                  - "iam:CreateInstanceProfile"
+                  - "iam:GenerateCredentialReport"
+                  - "iam:UntagRole"
+                  - "iam:PutRolePermissionsBoundary"
+                  - "iam:TagRole"
+                  - "iam:ResetServiceSpecificCredential"
+                  - "iam:PassRole"
+                  - "iam:EnableMFADevice"
+                  - "iam:ResyncMFADevice"
+                  - "iam:UpdateSAMLProvider"
+                  - "iam:CreatePolicy"
+                  - "iam:CreateServiceLinkedRole"
+                  - "iam:UpdateRole"
+                  - "iam:AddClientIDToOpenIDConnectProvider"
+                  - "iam:SetDefaultPolicyVersion"
+                  - "iam:UpdateAssumeRolePolicy"
+                  - "iam:RemoveRoleFromInstanceProfile"
+                  - "iam:CreateRole"
+                  - "iam:AttachRolePolicy"
+                  - "iam:CreateLoginProfile"
+                  - "iam:DetachRolePolicy"
+                  - "iam:AttachUserPolicy"
+                  - "iam:DetachUserPolicy"
+                  - "iam:PutUserPolicy"
+                  - "iam:*UserPolicy"
+                  - "iam:SimulatePrincipalPolicy"
+                  - "iam:CreateAccountAlias"
+                  - "iam:ChangePassword"
+                  - "iam:UpdateLoginProfile"
+                  - "iam:UpdateAccessKey"
+                  - "iam:UpdateSSHPublicKey"
+                  - "iam:UpdateAccountPasswordPolicy"
+                  - "iam:CreateSAMLProvider"
+                  - "iam:CreateVirtualMFADevice"
+                  - "iam:CreateAccessKey"
+                  - "iam:AddUserToGroup"
+                  - "iam:RemoveUserFromGroup"
+                  - "iam:CreatePolicyVersion"
+                  - "iam:UploadSigningCertificate"
+                  - "iam:TagUser"
+                  - "iam:CreateOpenIDConnectProvider"
+                  - "iam:UploadServerCertificate"
+                  - "iam:UntagUser"
+                  - "iam:UpdateSigningCertificate"
+                  - 'sqs:*'
+                  - 'kms:*'
+                  - 'servicediscovery:CreatePrivateDnsNamespace'
+                  - 'servicediscovery:CreateService'
+                  - 'servicediscovery:GetNamespace'
+                  - 'servicediscovery:GetOperation'
+                  - 'servicediscovery:GetService'
+                  - 'servicediscovery:ListNamespaces'
+                  - 'servicediscovery:ListServices'
+                  - 'servicediscovery:UpdateService'
+                  - 'servicediscovery:DeleteService'
+                  - 'es:*'
+                Effect: Allow
+                Resource: '*'
+
+  CodeBuildRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      RoleName: WellAnalytics-CodeBuildRole
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          -
+            Effect: "Allow"
+            Principal:
+              Service:
+                - "codebuild.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Path: /service-role/
+      Policies:
+        -
+          PolicyName: CFNAccessPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              -
+                Effect: "Allow"
+                Action:
+                  - "cloudformation:Get*"
+                  - "cloudformation:Describe*"
+                  - "cloudformation:List*"
+                Resource:
+                  - '*'
+              -
+                Effect: "Allow"
+                Action:
+                  - "codebuild:StartBuild"
+                Resource:
+                  - Fn::Sub: arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*
+              -
+                Effect: "Allow"
+                Action:
+                  - 's3:*'
+                  - 'apigateway:*'
+                  - 'cloudwatch:*'
+                  - 'events:*'
+                  - 'logs:*'
+                  - 'lambda:*'
+                  - 'cognito-identity:*'
+                  - 'cognito-idp:*'
+                  - 'cognito-sync:*'
+                  - 'codepipeline:*'
+                  - 'cloudformation:*'
+                  - 'dynamodb:*'
+                  - 'states:*'
+                  - 'iam:CreateUser'
+                  - 'iam:UpdateUser'
+                  - 'iam:DeleteUser'
+                  - 'iam:CreateAccessKey'
+                  - 'iam:UpdateAccessKey'
+                  - 'iam:DeleteAccessKey'
+                  - 'iam:Delete*'
+                  - "iam:List*"
+                  - "iam:Get*"
+                  - "iam:CreateServiceSpecificCredential"
+                  - "iam:DeactivateMFADevice"
+                  - "iam:GenerateServiceLastAccessedDetails"
+                  - "iam:UpdateOpenIDConnectProviderThumbprint"
+                  - "iam:PutRolePolicy"
+                  - "iam:AddRoleToInstanceProfile"
+                  - "iam:SimulateCustomPolicy"
+                  - "iam:UploadSSHPublicKey"
+                  - "iam:UpdateServiceSpecificCredential"
+                  - "iam:RemoveClientIDFromOpenIDConnectProvider"
+                  - "iam:UpdateRoleDescription"
+                  - "iam:UpdateServerCertificate"
+                  - "iam:CreateInstanceProfile"
+                  - "iam:GenerateCredentialReport"
+                  - "iam:UntagRole"
+                  - "iam:PutRolePermissionsBoundary"
+                  - "iam:TagRole"
+                  - "iam:ResetServiceSpecificCredential"
+                  - "iam:PassRole"
+                  - "iam:EnableMFADevice"
+                  - "iam:ResyncMFADevice"
+                  - "iam:UpdateSAMLProvider"
+                  - "iam:CreatePolicy"
+                  - "iam:CreateServiceLinkedRole"
+                  - "iam:UpdateRole"
+                  - "iam:AddClientIDToOpenIDConnectProvider"
+                  - "iam:SetDefaultPolicyVersion"
+                  - "iam:UpdateAssumeRolePolicy"
+                  - "iam:RemoveRoleFromInstanceProfile"
+                  - "iam:CreateRole"
+                  - "iam:AttachRolePolicy"
+                  - "iam:CreateLoginProfile"
+                  - "iam:DetachRolePolicy"
+                  - "iam:AttachUserPolicy"
+                  - "iam:DetachUserPolicy"
+                  - "iam:PutUserPolicy"
+                  - "iam:*UserPolicy"
+                  - "iam:SimulatePrincipalPolicy"
+                  - "iam:CreateAccountAlias"
+                  - "iam:ChangePassword"
+                  - "iam:UpdateLoginProfile"
+                  - "iam:UpdateAccessKey"
+                  - "iam:UpdateSSHPublicKey"
+                  - "iam:UpdateAccountPasswordPolicy"
+                  - "iam:CreateSAMLProvider"
+                  - "iam:CreateVirtualMFADevice"
+                  - "iam:CreateAccessKey"
+                  - "iam:AddUserToGroup"
+                  - "iam:RemoveUserFromGroup"
+                  - "iam:CreatePolicyVersion"
+                  - "iam:UploadSigningCertificate"
+                  - "iam:TagUser"
+                  - "iam:CreateOpenIDConnectProvider"
+                  - "iam:UploadServerCertificate"
+                  - "iam:UntagUser"
+                  - "iam:UpdateSigningCertificate"
+                  - 'sqs:*'
+                  - 'kms:*'
+                  - 'codedeploy:*'
+                  - 'servicediscovery:CreatePrivateDnsNamespace'
+                  - 'servicediscovery:CreateService'
+                  - 'servicediscovery:GetNamespace'
+                  - 'servicediscovery:GetOperation'
+                  - 'servicediscovery:GetService'
+                  - 'servicediscovery:ListNamespaces'
+                  - 'servicediscovery:ListServices'
+                  - 'servicediscovery:UpdateService'
+                  - 'servicediscovery:DeleteService'
+                  - 'es:*'
+                Resource:
+                  - "*"
+              -
+                Effect: "Allow"
+                Action:
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource:
+                  - Fn::Sub: arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/codebuild/*
+              -
+                Effect: "Allow"
+                Action:
+                  - "s3:PutObject"
+                  - "s3:GetObject"
+                  - "s3:GetObjectVersion"
+                  - "s3:ListBucket"
+                  - "s3:GetBucketPolicy"
+                Resource: '*'
+              -
+                Effect: "Allow"
+                Action:
+                  - "lambda:UpdateFunctionCode"
+                  - "lambda:UpdateFunctionConfiguration"
+                  - "lambda:PublishLayerVersion"
+                  - "lambda:GetLayerVersion"
+                Resource: '*'
+              -
+                Effect: "Allow"
+                Action:
+                  - "apigateway:GET"
+                  - "apigateway:POST"
+                Resource: '*'
+
+  PipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: ['sts:AssumeRole']
+            Effect: Allow
+            Principal:
+              Service: [codepipeline.amazonaws.com]
+        Version: '2012-10-17'
+      Path: /
+      Policies:
+        - PolicyName: CodePipelineAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Action:
+                - 's3:*'
+                - 'apigateway:*'
+                - 'cloudwatch:*'
+                - 'events:*'
+                - 'logs:*'
+                - 'cognito-identity:*'
+                - 'cognito-idp:*'
+                - 'cognito-sync:*'
+                - 'lambda:*'
+                - 'codepipeline:*'
+                - 'cloudformation:*'
+                - 'dynamodb:*'
+                - 'states:*'
+                - 'iam:CreateUser'
+                - 'iam:UpdateUser'
+                - 'iam:DeleteUser'
+                - 'iam:CreateAccessKey'
+                - 'iam:UpdateAccessKey'
+                - 'iam:DeleteAccessKey'
+                - 'iam:Delete*'
+                - "iam:List*"
+                - "iam:Get*"
+                - "iam:CreateServiceSpecificCredential"
+                - "iam:DeactivateMFADevice"
+                - "iam:GenerateServiceLastAccessedDetails"
+                - "iam:UpdateOpenIDConnectProviderThumbprint"
+                - "iam:PutRolePolicy"
+                - "iam:AddRoleToInstanceProfile"
+                - "iam:SimulateCustomPolicy"
+                - "iam:UploadSSHPublicKey"
+                - "iam:UpdateServiceSpecificCredential"
+                - "iam:RemoveClientIDFromOpenIDConnectProvider"
+                - "iam:UpdateRoleDescription"
+                - "iam:UpdateServerCertificate"
+                - "iam:CreateInstanceProfile"
+                - "iam:GenerateCredentialReport"
+                - "iam:UntagRole"
+                - "iam:PutRolePermissionsBoundary"
+                - "iam:TagRole"
+                - "iam:ResetServiceSpecificCredential"
+                - "iam:PassRole"
+                - "iam:EnableMFADevice"
+                - "iam:ResyncMFADevice"
+                - "iam:UpdateSAMLProvider"
+                - "iam:CreatePolicy"
+                - "iam:CreateServiceLinkedRole"
+                - "iam:UpdateRole"
+                - "iam:AddClientIDToOpenIDConnectProvider"
+                - "iam:SetDefaultPolicyVersion"
+                - "iam:UpdateAssumeRolePolicy"
+                - "iam:RemoveRoleFromInstanceProfile"
+                - "iam:CreateRole"
+                - "iam:AttachRolePolicy"
+                - "iam:CreateLoginProfile"
+                - "iam:DetachRolePolicy"
+                - "iam:AttachUserPolicy"
+                - "iam:DetachUserPolicy"
+                - "iam:PutUserPolicy"
+                - "iam:*UserPolicy"
+                - "iam:SimulatePrincipalPolicy"
+                - "iam:CreateAccountAlias"
+                - "iam:ChangePassword"
+                - "iam:UpdateLoginProfile"
+                - "iam:UpdateAccessKey"
+                - "iam:UpdateSSHPublicKey"
+                - "iam:UpdateAccountPasswordPolicy"
+                - "iam:CreateSAMLProvider"
+                - "iam:CreateVirtualMFADevice"
+                - "iam:CreateAccessKey"
+                - "iam:AddUserToGroup"
+                - "iam:RemoveUserFromGroup"
+                - "iam:CreatePolicyVersion"
+                - "iam:UploadSigningCertificate"
+                - "iam:TagUser"
+                - "iam:CreateOpenIDConnectProvider"
+                - "iam:UploadServerCertificate"
+                - "iam:UntagUser"
+                - "iam:UpdateSigningCertificate"
+                - 'sqs:*'
+                - 'kms:*'
+                - 'codedeploy:*'
+                - 'servicediscovery:CreatePrivateDnsNamespace'
+                - 'servicediscovery:CreateService'
+                - 'servicediscovery:GetNamespace'
+                - 'servicediscovery:GetOperation'
+                - 'servicediscovery:GetService'
+                - 'servicediscovery:ListNamespaces'
+                - 'servicediscovery:ListServices'
+                - 'servicediscovery:UpdateService'
+                - 'servicediscovery:DeleteService'
+                - 'es:*'
+
+                Effect: Allow
+                Resource: '*'
+              - Action:
+                  - 'codecommit:GetUploadArchiveStatus'
+                  - 'codecommit:CancelUploadArchive'
+                  - 'codecommit:GetBranch'
+                  - 'codecommit:GetCommit'
+                  - 'codecommit:GetUploadStatus'
+                  - 'codecommit:UploadArchive'
+                Effect: Allow
+                Resource: '*'
+              -
+                Effect: "Allow"
+                Action:
+                  - "codebuild:*"
+                Resource:
+                  - Fn::Sub: arn:aws:codebuild:${AWS::Region}:${AWS::AccountId}:project/*
+
+                                    

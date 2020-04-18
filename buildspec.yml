@@ -1,0 +1,56 @@
+# Copyright © Amazon Web Services
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+version: 0.2
+
+phases:
+  install:
+    commands:
+      - echo "[+] Scanning for security vulnerability within dependencies"
+      # - pipenv check (if pipenv is installed and a Pipfile is in place)
+      # - Alternatively: https://www.owasp.org/index.php/OWASP_Dependency_Check
+  build:
+    commands:
+      - echo "[+] Installing dependencies...."
+      - echo " Installing requests package"
+      - pip install requests==2.23.0 -t requests/python/lib/python3.7/site-packages/
+      - cd requests
+      - zip -r BSEE-Requirements-1.zip python/
+      - cd ..
+      - echo " Installing AWS4Auth Package"
+      - pip install requests-aws4auth==0.9 -t aws4auth/python/lib/python3.7/site-packages/
+      - cd aws4auth
+      - zip -r AWS4Auth-Lambda.zip python/
+      - cd ..
+      - echo "Installing Elasticsearch Package"
+      - pip install elasticsearch==7.6.0 -t ES/python/lib/python3.7/site-packages
+      - cd ES
+      - zip -r ElasticSearch-LambdaLayer.zip python/
+      - cd ..
+      - echo "Installing Pandas"
+      - touch requirement.txt
+      - printf "pandas==0.23.4\npytz==2018.7" > requirements.txt 
+      - pip install -r requirements.txt -t Pandas/python/
+      - cd Pandas
+      - zip -r Pandas.zip python/
+      - cd ..
+      - aws s3 cp Pandas/Pandas.zip s3://$S3Bucket/Layers/Pandas.zip
+      - aws s3 cp aws4auth/AWS4Auth-Lambda.zip s3://$S3Bucket/Layers/AWS4Auth-Lambda.zip
+      - aws s3 cp requests/BSEE-Requirements-1.zip s3://$S3Bucket/Layers/requests.zip
+      - aws s3 cp ES/ElasticSearch-LambdaLayer.zip s3://$S3Bucket/Layers/ElasticSearch-LambdaLayer.zip
+      
+  post_build:
+    commands:
+      - echo "SAM packaging completed on `date`"
+
