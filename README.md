@@ -1,4 +1,4 @@
-##Analyze drilling reports using natural language processing with Amazon Comprehend
+## Analyze drilling reports using natural language processing with Amazon Comprehend
 
 TODO: Fill this README out!
 
