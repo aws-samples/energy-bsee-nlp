@@ -1,11 +1,5 @@
-## Well Analytics with Amazon Comprehend
+## Analyze drilling reports using natural language processing with Amazon Comprehend
 
-TODO: Fill this README out!
-
-Be sure to:
-
-* Change the title in this README
-* Edit your repository description on GitHub
 
 ### Directions:
 1) In your AWS account, execute the CloudFormation template 'CFN-Pipeline.yml'. Provide an email that will be later used as login for accessing the Kibana Dashboard
