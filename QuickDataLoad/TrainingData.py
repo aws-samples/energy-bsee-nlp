@@ -46,9 +46,9 @@ indexDoc = {
 def createIndex(esClient):
     try:
         print("Creating Index")
-        res = esClient.indices.exists('events1')
+        res = esClient.indices.exists('events')
         if res is False:
-            esClient.indices.create('events1', body=indexDoc)
+            esClient.indices.create('events', body=indexDoc)
             print ('Created')
         return 1
     except Exception as E:
@@ -63,7 +63,7 @@ def indexDocElement(esClient,response):
         depth = float(response['DEPTH'])
         location = response['LOCATION']
         dailyRemark = response['DAILY_REMARK']
-        retval = esClient.index(index='events1', body={
+        retval = esClient.index(index='events', body={
             'EVENT_DATE': response['EVENT_DATE'],
             'SN_WAR': snWar,
             'API_WELL_NUMBER': apiWellNumber,
