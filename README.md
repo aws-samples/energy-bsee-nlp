@@ -14,10 +14,10 @@
 10) You will now be able to see the items in your dashboard (may need to adjust the time range). Create custom visualizations and see what valuable insights you can gain from the data!
 
 #### Closing Notes
-a) If you have chosen the 'Test' option when originally deploying the Cloud Formation template, you will only have a couple of data points in visible in the Elasticsearch cluster. For a full data set, navigate into the QuickDataLoad directory locally (one you cloned from GitHub). Run the following commands, making sure to substitute the parameters in '< >' with their respective values.
+a) If you have chosen the 'Test' option when originally deploying the Cloud Formation template, you will only have a couple of data points in visible in the Elasticsearch cluster. For a full data set, navigate into the QuickDataLoad directory locally (one you cloned from GitHub). Run the following commands, making sure to substitute the parameters in '( )' with their respective values.
 #### pip install Elasticsearch
 #### pip install requests_aws4auth
-#### python TrainingData.py \<Elasticsearch endpoint\> \<region\>
+#### python TrainingData.py (Elasticsearch endpoint) (region)
 
 b) To clean up, delete all the contents of the S3 bucket <accountId>-bsee-well-analytics. Then, delete the cloudFormation template (WellAnalytics-CFN). Wait for this to finish deleting. Once complete, clear the contents of the S3 bucket <accountId>-bsee-sourcecode (note this bucket has versioning, so you may need to click show all versions before deleting everything). Finally, delete the original cloud formation template you launched at the beginning of this walkthrough
 
